@@ -63,11 +63,13 @@ export interface PinoSentryOptions extends Sentry.NodeOptions {
   /** Minimum level for a log to be reported to Sentry from pino-sentry */
   level?: keyof typeof SeverityIota;
   messageAttributeKey?: string;
+  errorAttributeKey?: string;
   extraAttributeKeys?: string[];
   stackAttributeKey?: string;
   maxValueLength?: number;
   sentryExceptionLevels?: Severity[];
   decorateScope?: (data: Record<string, unknown>, _scope: Sentry.Scope) => void;
+  preventEventProcessing?: (event: ChunkInfo) => boolean;
 }
 
 function get(data: any, path: string) {
@@ -78,11 +80,13 @@ export class PinoSentryTransport {
   // Default minimum log level to `debug`
   minimumLogLevel: ValueOf<typeof SeverityIota> = SeverityIota[Severity.Debug];
   messageAttributeKey = 'msg';
+  errorAttributeKey = 'err';
   extraAttributeKeys = ['extra'];
   stackAttributeKey = 'stack';
   maxValueLength = 250;
   sentryExceptionLevels = [Severity.Fatal, Severity.Error];
   decorateScope = (_data: Record<string, unknown>, _scope: Sentry.Scope) => {/**/};
+  preventEventProcessing = (_event: ChunkInfo) => { return false; };
 
   public constructor(options?: PinoSentryOptions) {
     Sentry.init(this.validateOptions(options || {}));
@@ -111,8 +115,8 @@ export class PinoSentryTransport {
   private chunkInfoCallback(chunk: any, cb: any) {
     const severity = this.getLogSeverity(chunk.level);
 
-    // Check if we send this Severity to Sentry
-    if (!this.shouldLog(severity)) {
+    // Check if we want to process this event
+    if (!this.shouldLog(severity) || this.preventEventProcessing(chunk)) {
       setImmediate(cb);
       return;
     }
@@ -139,6 +143,7 @@ export class PinoSentryTransport {
       }
     });
     const message: any & Error = get(chunk, this.messageAttributeKey);
+    const err = get(chunk, this.errorAttributeKey);
     const stack = get(chunk, this.stackAttributeKey) || '';
 
     const scope = new Sentry.Scope();
@@ -146,7 +151,10 @@ export class PinoSentryTransport {
 
     scope.setLevel(severity as any);
 
-    if (this.isObject(tags)) {
+    if (Array.isArray(tags)) {
+      tags.forEach(tag => scope.setTag(tag, true));
+    }
+    else if (this.isObject(tags)) {
       Object.keys(tags).forEach(tag => scope.setTag(tag, tags[tag]));
     }
 
@@ -159,7 +167,7 @@ export class PinoSentryTransport {
     }
 
     // Capturing Errors / Exceptions
-    if (this.isSentryException(severity)) {
+    if (this.isSentryException(severity) && err) {
       const error = message instanceof Error ? message : new ExtendedError({ message, stack });
 
       Sentry.captureException(error, scope);
@@ -195,6 +203,7 @@ export class PinoSentryTransport {
     this.maxValueLength = options.maxValueLength ?? this.maxValueLength;
     this.sentryExceptionLevels = options.sentryExceptionLevels ?? this.sentryExceptionLevels;
     this.decorateScope = options.decorateScope ?? this.decorateScope;
+    this.preventEventProcessing = options.preventEventProcessing ?? this.preventEventProcessing;
 
     return {
       dsn,
