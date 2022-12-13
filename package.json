@@ -29,6 +29,7 @@
     "test": "jest",
     "prepublishOnly": "npm run lint && npm run build && npm run test"
   },
+  "private": false,
   "repository": "https://github.com/salesflare/pino-sentry",
   "license": "MIT",
   "bugs": {
